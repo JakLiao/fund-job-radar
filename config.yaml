@@ -1,0 +1,31 @@
+notification:
+  # 飞书群机器人 Webhook（已移除，请设置环境变量 FEISHU_WEBHOOK）
+  feishu_webhook: "${FEISHU_WEBHOOK}"
+  push_times: ["09:00"]
+  quiet_hours_start: "22:00"
+  quiet_hours_end: "08:00"
+
+apis:
+  crunchbase_key: ""  # 可选，留空即可
+
+edgar:
+  enabled: true  # 启用 SEC EDGAR 数据源
+  days_lookback: 60  # 抓取最近 N 天的数据（扩大以捕获更多）
+  min_amount: 1800000  # 最低融资金额（人民币元），SEC Form D 门槛 $25万 × 7.2 ≈ 180万元
+
+scoring:
+  window_seed_days: 45
+  window_series_a_days: 90
+  window_series_b_days: 120
+  window_series_c_plus_days: 180
+  score_threshold: 5.0
+  signal_high_threshold: 15
+  signal_medium_threshold: 8
+
+scheduler:
+  techcrunch_interval_minutes: 30  # TechCrunch 每 30 分钟
+  edgar_interval_hours: 6  # EDGAR 每 6 小时（数据更新较慢）
+  crunchbase_interval_minutes: 60  # Crunchbase 每 60 分钟（需要 API Key）
+
+database:
+  path: "data/fund_job_radar.db"
