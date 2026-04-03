@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 自动化监控融资信号，提前预判目标公司的招聘需求爆发时间点。
+<img width="1869" height="1202" alt="image" src="https://github.com/user-attachments/assets/c5c319e3-d6a7-487b-b56e-22e55b717fb6" />
 
 ## 功能特性
 
