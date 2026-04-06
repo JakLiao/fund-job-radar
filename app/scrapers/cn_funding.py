@@ -149,12 +149,13 @@ def _parse_round_type(text: str) -> Optional[str]:
     
     # Round patterns - check in order of specificity
     round_map = [
-        # Use negative lookbehind (?<![A-Za-z-]) to avoid A matching inside "Pre-A", etc.
+        # Use negative lookbehind (?<![A-Za-z0-9_-]) so Chinese characters (which are \w
+        # in Unicode) do NOT block the match. This fixes "近亿元B轮" vs "AB轮"区分.
         (r'D\+?\s*轮', 'D'),
         (r'C1\s*轮|C1轮', 'C'),
         (r'C\+?\s*轮', 'C'),
-        (r'(?<![\w-])B\+?\s*轮', 'B'),
-        (r'(?<![\w-])A\+?\s*轮', 'A'),
+        (r'(?<![A-Za-z0-9_-])B\+?\s*轮', 'B'),
+        (r'(?<![A-Za-z0-9_-])A\+?\s*轮', 'A'),
         (r'[Pp]re-?[Bb]\s*轮|Pre-B', 'Pre-B'),
         (r'[Pp]re-?[Aa]\s*轮|Pre-A', 'Pre-A'),
         (r'[Pp]re-?[Ii][\s-]*[Pp][\s-]*[Ii][\s-]*[Oo]|Pre-IPO', 'Pre-IPO'),
@@ -182,6 +183,7 @@ def _extract_company_from_36kr_entry(title: str, desc: str) -> str:
     - "获X投资，公司名做了..."
     - "36氪独家 | 公司名 ..."
     - "公司名 被爆完成..."
+    - "高端智能投影品牌AWOL Vision获..." (English/mixed names)
     """
     # Clean HTML tags from description for analysis
     desc_clean = re.sub(r'<[^>]+>', ' ', desc)
@@ -208,14 +210,29 @@ def _extract_company_from_36kr_entry(title: str, desc: str) -> str:
     if match:
         return match.group(1).strip()
     
-    # "公司名 获..." at start
-    match = re.match(r'^([\u4e00-\u9fa5a-zA-Z0-9]{2,20})\s+(?:获|完成|拿到|宣布)', title)
+    # "公司名 获..." at start (supports mixed Chinese + English)
+    match = re.match(r'^([\u4e00-\u9fa5a-zA-Z0-9\s]{2,30})\s+(?:获|完成|拿到|宣布)', title)
     if match:
         name = match.group(1).strip()
-        # Clean trailing punctuation
+        # Clean trailing punctuation and particles
         name = re.sub(r'[，。、\s].*$', '', name)
+        # Also clean trailing brand descriptors
+        name = re.sub(r'(品牌|公司|集团|科技|智能)?$', '', name).strip()
         if len(name) >= 2:
             return name
+    
+    # NEW: Extract company name before "获" (for articles like "高端智能投影品牌AWOL Vision获...")
+    if '获' in title:
+        before_获 = title.split('获')[0]
+        # Look for company name: may include Chinese + English mixed
+        # Pattern: remove common prefixes like "高端智能投影品牌", "智能投影品牌" etc.
+        cleaned = before_获
+        prefixes_to_remove = ['高端智能投影', '智能投影', '高端', '智能', '品牌']
+        for prefix in prefixes_to_remove:
+            cleaned = re.sub(f'^{prefix}', '', cleaned)
+        cleaned = cleaned.strip()
+        if len(cleaned) >= 2:
+            return cleaned
     
     return ""
 
@@ -345,12 +362,55 @@ def fetch_36kr_fundings(limit: int = 50) -> list[FundingEvent]:
 # 投资界 (pedaily.cn) Scraper
 # ==============================================================================
 
+def _parse_pedaily_date(text: str) -> datetime:
+    """Parse date from pedaily article page.
+    
+    Format: <div class="date">2026-04<span>05</span></div>
+    Returns: datetime object for the parsed date.
+    """
+    # Match: <div class="date">2026-04<span>05</span></div>
+    match = re.search(r'<div class="date">(\d{4})-(\d{2})<span>(\d{2})</span></div>', text)
+    if match:
+        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return datetime.now()
+    
+    # Fallback: try other date patterns
+    match2 = re.search(r'(\d{4})-(\d{2})-(\d{2})', text)
+    if match2:
+        year, month, day = int(match2.group(1)), int(match2.group(2)), int(match2.group(3))
+        try:
+            return datetime(year, month, day)
+        except ValueError:
+            return datetime.now()
+    
+    return datetime.now()
+
+
+def _fetch_pedaily_detail(url: str, title: str) -> tuple[Optional[datetime], str]:
+    """Fetch a pedaily detail page to get the actual publication date.
+    
+    Returns: (announcement_date, source_url)
+    """
+    try:
+        r = requests.get(url, timeout=10, headers=HEADERS)
+        r.encoding = r.apparent_encoding or 'utf-8'
+        announcement_date = _parse_pedaily_date(r.text)
+        return announcement_date, url
+    except Exception as e:
+        logger.debug(f"Failed to fetch pedaily detail {url}: {e}")
+        return datetime.now(), url
+
+
 def _fetch_pedaily_fundings() -> list[FundingEvent]:
     """
     Fetch funding events from 投资界 (pedaily.cn).
     
-    Uses the /first/t76/ page which contains funding news flash items
-    as data-title attributes on image elements.
+    The /first/t76/ page lists recent funding flash items organized by date.
+    Each date section (<div class="hot-online-date">) precedes a <ul> of items.
+    We parse both the date from the section header and the article metadata from <li> tags.
     
     Source: https://www.pedaily.cn/first/t76/
     """
@@ -360,70 +420,138 @@ def _fetch_pedaily_fundings() -> list[FundingEvent]:
         r = requests.get(
             "https://www.pedaily.cn/first/t76/",
             timeout=10,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            }
+            headers=HEADERS
         )
         r.encoding = r.apparent_encoding or 'utf-8'
-        text = r.text
         
         if r.status_code != 200:
             logger.debug(f"pedaily /first/t76/ returned {r.status_code}")
             return events
         
-        # Extract funding news from data-title attributes
-        # e.g. '深耕多模态AIOS，无界方舟连续完成数亿元Pre-A轮融资'
-        data_titles = re.findall(r'data-title="([^"]+)"', text)
+        # Parse HTML with BeautifulSoup to extract date-annotated items
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(r.text, 'html.parser')
         
-        for title in data_titles:
-            if not title or len(title) < 5:
+        # Iterate through date sections: <div class="hot-online-date"> followed by <ul>
+        date_sections = soup.find_all('div', class_='hot-online-date')
+        
+        for date_div in date_sections:
+            year_span = date_div.find('span', class_='year')
+            md_span = date_div.find('span', class_='md')
+            if not year_span or not md_span:
                 continue
             
-            # Skip if clearly not a funding announcement
-            funding_kws = ['融资', '投资', '轮', '获', '万元', '亿', '天使']
-            if not any(kw in title for kw in funding_kws):
+            year = year_span.get_text(strip=True)
+            md = md_span.get_text(strip=True)  # e.g. "04-03"
+            try:
+                announcement_date = datetime.strptime(f"{year}-{md}", "%Y-%m-%d")
+            except ValueError:
+                announcement_date = datetime.now()
+            
+            # Get the sibling <ul> after this date div
+            ul = date_div.find_next_sibling('ul')
+            if not ul:
                 continue
             
-            # Extract company name
-            company = _extract_company_from_pedaily_title(title)
+            lis = ul.find_all('li', attrs={'data-id': True})
             
-            # Extract round type
-            round_type = _parse_round_type(title)
+            for li in lis:
+                title = li.get('data-title', '').strip()
+                article_url = li.get('data-url', '').strip()
+                
+                if not title or len(title) < 5:
+                    continue
+                
+                # Skip non-funding items
+                funding_kws = ['融资', '投资', '轮', '获', '万元', '亿', '天使']
+                if not any(kw in title for kw in funding_kws):
+                    continue
+                
+                # Extract company name
+                company = _extract_company_from_pedaily_title(title)
+                if not company or len(company) < 2:
+                    continue
+                
+                # Extract round type
+                round_type = _parse_round_type(title)
+                
+                # Extract amount
+                amount = _parse_cn_amount(title)
+                
+                if not round_type and not amount:
+                    continue
+                
+                event = FundingEvent(
+                    company_name=company,
+                    company_domain="",
+                    round_type=round_type or "Unknown",
+                    amount_cny=amount or 0.0,
+                    announcement_date=announcement_date,
+                    investors="",
+                    source_url=article_url or "https://www.pedaily.cn/first/t76/",
+                    source="cn",
+                    industry_group=classify_industry(company) or "",
+                )
+                events.append(event)
+                logger.info(f"pedaily: {company} | {round_type} | {announcement_date.date()} | ${(amount or 0):,.0f}")
+    
+    except ImportError:
+        logger.debug("BeautifulSoup not available, falling back to regex parsing")
+        # Fallback: simple regex parsing (less accurate date extraction)
+        try:
+            r = requests.get("https://www.pedaily.cn/first/t76/", timeout=10, headers=HEADERS)
+            r.encoding = r.apparent_encoding or 'utf-8'
+            text = r.text
             
-            # Extract amount
-            amount = _parse_cn_amount(title)
-            
-            if not round_type and not amount:
-                continue
-            
-            if not company:
-                # Try to find company name from the first part of title
-                # Pattern: "XXX完成YYY融资" or "XXX获YYY融资"
-                company_match = re.match(r'^([^，,、。完成获拿到]+)', title)
-                if company_match:
-                    company = company_match.group(1).strip()
-                    # Remove trailing particles
-                    company = re.sub(r'[公司]$', '', company)
-            
-            if not company or len(company) < 2:
-                continue
-            
-            event = FundingEvent(
-                company_name=company,
-                company_domain="",
-                round_type=round_type or "Unknown",
-                amount_cny=amount or 0.0,
-                announcement_date=datetime.now(),
-                investors="",
-                source_url="https://www.pedaily.cn/first/t76/",
-                source="cn",
-                industry_group=classify_industry(company) or "",
+            # Extract date blocks and corresponding items
+            date_blocks = re.findall(
+                r'<span class="year">(\d+)</span><span class="md">(\d{2}-\d{2})</span>(.*?)(?=<span class="year">|</body)',
+                text, re.DOTALL
             )
-            events.append(event)
-            logger.info(f"pedaily funding: {company} | {round_type} | ${(amount or 0):,.0f}")
             
+            for year, md, block in date_blocks:
+                try:
+                    announcement_date = datetime.strptime(f"{year}-{md}", "%Y-%m-%d")
+                except ValueError:
+                    announcement_date = datetime.now()
+                
+                data_titles = re.findall(r'data-title="([^"]+)"', block)
+                data_urls = re.findall(r'data-url="(https://www\.pedaily\.cn/first/\d+\.shtml)"', block)
+                
+                for i, title in enumerate(data_titles):
+                    if not title or len(title) < 5:
+                        continue
+                    funding_kws = ['融资', '投资', '轮', '获', '万元', '亿', '天使']
+                    if not any(kw in title for kw in funding_kws):
+                        continue
+                    
+                    company = _extract_company_from_pedaily_title(title)
+                    if not company or len(company) < 2:
+                        continue
+                    
+                    round_type = _parse_round_type(title)
+                    amount = _parse_cn_amount(title)
+                    if not round_type and not amount:
+                        continue
+                    
+                    article_url = data_urls[i] if i < len(data_urls) else ""
+                    
+                    event = FundingEvent(
+                        company_name=company,
+                        company_domain="",
+                        round_type=round_type or "Unknown",
+                        amount_cny=amount or 0.0,
+                        announcement_date=announcement_date,
+                        investors="",
+                        source_url=article_url,
+                        source="cn",
+                        industry_group=classify_industry(company) or "",
+                    )
+                    events.append(event)
+                    logger.info(f"pedaily: {company} | {round_type} | {announcement_date.date()}")
+        except Exception as e:
+            logger.debug(f"pedaily fallback parsing failed: {e}")
+    
     except Exception as e:
         logger.debug(f"pedaily /first/t76/ fetch failed: {e}")
     

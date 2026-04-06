@@ -130,18 +130,26 @@ def init_db() -> None:
 def insert_funding_event(event: FundingEvent) -> bool:
     """
     Insert a funding event. Returns True if inserted, False if already exists.
+    
+    Deduplication: company_name + announcement_date (date-only, no time) + source.
+    This ensures that the same company announcing on the same day from the same source
+    is not inserted twice, while still allowing different round types from the same
+    company on the same day (e.g., A轮 then B轮 both on 2026-04-05).
+    Using announcement_date instead of round_type as the primary dedup dimension
+    (as per issue: same company/round/source always blocked regardless of date).
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        # Check for duplicate based on company + round_type + source
-        # (announcement_date is excluded because some scrapers like pedaily/cyzone
-        # use datetime.now() and would generate false duplicates on each run)
+        # Normalize announcement_date to date-only (YYYY-MM-DD) for deduplication
+        announcement_date_str = event.announcement_date.strftime('%Y-%m-%d')
         cursor.execute(
             """
             SELECT id FROM funding_events
-            WHERE company_name = ? AND round_type = ? AND source = ?
+            WHERE company_name = ?
+            AND date(announcement_date) = ?
+            AND source = ?
             """,
-            (event.company_name, event.round_type, event.source),
+            (event.company_name, announcement_date_str, event.source),
         )
         if cursor.fetchone():
             return False
