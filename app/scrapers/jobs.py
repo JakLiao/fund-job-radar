@@ -956,6 +956,12 @@ def _fetch_company_careers_page(company_name: str, company_domain: str = "") -> 
     
     try:
         with PlaywrightContext() as (page, browser, playwright):
+            # Initialised before the loop: a company whose careers URLs are
+            # all unreachable must not raise UnboundLocalError below.
+            job_count = 0
+            job_titles = []
+            job_urls = []
+
             for base_url in unique_urls:
                 try:
                     logger.debug(f"Trying careers URL: {base_url}")
@@ -969,9 +975,6 @@ def _fetch_company_careers_page(company_name: str, company_domain: str = "") -> 
                     time.sleep(2)
                 
                     # Try to extract job count
-                    job_count = 0
-                    job_titles = []
-                    job_urls = []
                 
                     # Strategy 1: Look for job count badge/text
                     # Patterns: "23 open positions", "We have 15 jobs", "45 openings"

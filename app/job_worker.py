@@ -7,6 +7,7 @@ APScheduler thread pool shared with the funding-event fetch jobs.
 import argparse
 import logging
 import sys
+import time
 
 logging.basicConfig(
     level=logging.INFO,
@@ -100,11 +101,51 @@ def run_batch(offset: int, limit: int) -> int:
     return inserted
 
 
+def run_sweep(batches: list) -> int:
+    """Run several batches sequentially, logging a summary at the end.
+
+    Args:
+        batches: List of (offset, limit) tuples.
+
+    Returns:
+        Total number of newly inserted job postings across all batches.
+    """
+    total = 0
+    started = time.monotonic()
+    for index, (offset, limit) in enumerate(batches, start=1):
+        logger.info("=== Sweep batch %d/%d (offset=%d limit=%d) ===",
+                    index, len(batches), offset, limit)
+        total += run_batch(offset, limit)
+    logger.info("Sweep finished: %d batches, %d new postings, %.1f min elapsed",
+                len(batches), total, (time.monotonic() - started) / 60)
+    return total
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fetch job postings in batches")
-    parser.add_argument("--offset", type=int, required=True)
-    parser.add_argument("--limit", type=int, required=True)
+    parser.add_argument("--offset", type=int, help="Start index into the company list")
+    parser.add_argument("--limit", type=int, help="Maximum companies to process")
+    parser.add_argument(
+        "batches",
+        nargs="*",
+        type=int,
+        metavar="N",
+        help="Flat list of OFFSET LIMIT pairs run sequentially in this process",
+    )
     args = parser.parse_args()
+
+    if args.batches:
+        if len(args.batches) % 2 != 0:
+            parser.error("batches must be flat OFFSET LIMIT pairs")
+        pairs = [
+            (args.batches[i], args.batches[i + 1])
+            for i in range(0, len(args.batches), 2)
+        ]
+        run_sweep(pairs)
+        return 0
+
+    if args.offset is None or args.limit is None:
+        parser.error("--offset and --limit are required unless --sweep is used")
 
     run_batch(args.offset, args.limit)
     return 0
