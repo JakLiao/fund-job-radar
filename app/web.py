@@ -3,6 +3,7 @@
 简单的 Web 界面查看融资事件历史和搜索。
 """
 
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -500,4 +501,9 @@ OPPORTUNITIES_TEMPLATE = """
 """
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # debug 模式会暴露 Werkzeug 调试器（可执行任意代码），默认关闭
+    app.run(
+        host=os.environ.get("WEB_HOST", "0.0.0.0"),
+        port=int(os.environ.get("WEB_PORT", "5000")),
+        debug=os.environ.get("FLASK_DEBUG", "0") == "1",
+    )

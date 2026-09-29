@@ -1,6 +1,6 @@
 #!/bin/bash
 # Fund-Job Radar · 启动脚本
-# 绝对路径：/home/xiaoduo/.openclaw/workspace-product/fund-job-radar/run.sh
+# 仓库路径：/mnt/e/code/fund-job-radar
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

@@ -55,7 +55,10 @@ class TestConfig:
         assert c.get("scoring.score_threshold") == 5.0
         assert c.get("nonexistent.key", "default") == "default"
 
-    def test_feishu_webhook(self):
+    def test_feishu_webhook(self, monkeypatch):
+        # config.yaml 中为 ${FEISHU_WEBHOOK} 占位符，加载时从环境变量解析，
+        # 因此这里必须注入环境变量，不能依赖开发机的 .env
+        monkeypatch.setenv("FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/abc123")
         c = get_config()
         assert "feishu" in c.feishu_webhook.lower()
 
