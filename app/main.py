@@ -110,47 +110,6 @@ def job_fetch_cn_funding():
         logger.error(f"CN funding fetch job failed: {e}", exc_info=True)
 
 
-def job_fetch_jobs():
-    """Job: Fetch job postings for funded companies."""
-    logger.info("=== Starting job postings fetch job ===")
-    try:
-        from .database import get_all_funding_events
-        from .scrapers.jobs import fetch_company_jobs
-        
-        # Get all funding events to find company names
-        fundings = get_all_funding_events()
-        
-        if not fundings:
-            logger.info("No funding events found, skipping job fetch")
-            return
-        
-        # Get unique company names from recent fundings (preserve domain info)
-        recent_companies = {}  # name -> domain
-        for f in fundings:
-            if f.amount_cny >= 500000:  # Only fetch jobs for significant fundings
-                if f.company_name not in recent_companies:
-                    recent_companies[f.company_name] = f.company_domain
-        
-        logger.info(f"Fetching job postings for {len(recent_companies)} companies")
-        
-        # Fetch jobs for each company
-        new_count = 0
-        from .database import insert_job_posting
-        for company_name, company_domain in recent_companies.items():
-            try:
-                jobs = fetch_company_jobs(company_name, company_domain)
-                for job in jobs:
-                    if insert_job_posting(job):
-                        new_count += 1
-            except Exception as e:
-                logger.warning(f"Failed to fetch jobs for {company_name}: {e}")
-        
-        logger.info(f"Inserted {new_count} new job postings")
-        
-    except Exception as e:
-        logger.error(f"Job postings fetch job failed: {e}", exc_info=True)
-
-
 def job_fetch_company_careers():
     """Job: Fetch careers pages for funded companies using Playwright."""
     logger.info("=== Starting company careers page fetch (Playwright) ===")
@@ -270,18 +229,6 @@ def main():
         trigger=IntervalTrigger(minutes=30),
         id="fetch_cn_funding",
         name="CN Funding RSS Fetch (36kr)",
-        replace_existing=True,
-        misfire_grace_time=300,
-        coalesce=True,
-        max_instances=1,
-    )
-    
-    # Job postings fetch - every 6 hours (Phase 2)
-    scheduler.add_job(
-        job_fetch_jobs,
-        trigger=IntervalTrigger(hours=6),
-        id="fetch_jobs",
-        name="Job Postings Fetch",
         replace_existing=True,
         misfire_grace_time=300,
         coalesce=True,

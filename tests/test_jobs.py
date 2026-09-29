@@ -90,3 +90,47 @@ class TestGetCnCareerUrl:
         # Should find 字节 in "字节跳动科技"
         url, src = _get_cn_career_url("字节跳动科技")
         assert "bytedance" in url.lower() or src == "liepin"
+
+
+class FakeFunding:
+    def __init__(self, company_name, company_domain, amount_cny):
+        self.company_name = company_name
+        self.company_domain = company_domain
+        self.amount_cny = amount_cny
+from app.job_worker import collect_target_companies, select_batch
+
+
+def test_select_batch_takes_first_n():
+    assert select_batch(list(range(100)), 0, 50) == list(range(50))
+
+
+def test_select_batch_takes_remainder():
+    assert select_batch(list(range(100)), 50, 50) == list(range(50, 100))
+
+
+def test_select_batch_handles_offset_beyond_end():
+    assert select_batch(list(range(10)), 50, 50) == []
+
+
+def test_select_batch_handles_empty_input():
+    assert select_batch([], 0, 50) == []
+
+
+def test_collect_target_companies_filters_below_threshold():
+    fundings = [
+        FakeFunding("SmallCo", "small.com", 400000),
+        FakeFunding("BigCo", "big.com", 500000),
+    ]
+    assert collect_target_companies(fundings) == [("BigCo", "big.com")]
+
+
+def test_collect_target_companies_dedupes_keeping_first_domain():
+    fundings = [
+        FakeFunding("Dup", "first.com", 900000),
+        FakeFunding("Dup", "second.com", 900000),
+    ]
+    assert collect_target_companies(fundings) == [("Dup", "first.com")]
+
+
+def test_collect_target_companies_empty_input():
+    assert collect_target_companies([]) == []
