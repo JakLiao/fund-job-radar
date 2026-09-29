@@ -58,3 +58,14 @@ class TestConfig:
     def test_feishu_webhook(self):
         c = get_config()
         assert "feishu" in c.feishu_webhook.lower()
+
+
+def test_validate_notification_config_warns_when_webhook_missing(monkeypatch):
+    monkeypatch.delenv("FEISHU_WEBHOOK", raising=False)
+    msg = get_config().validate_notification_config()
+    assert "FEISHU_WEBHOOK" in msg
+
+
+def test_validate_notification_config_ok_when_webhook_present(monkeypatch):
+    monkeypatch.setenv("FEISHU_WEBHOOK", "https://open.feishu.cn/open-apis/bot/v2/hook/abc123")
+    assert get_config().validate_notification_config() == ""

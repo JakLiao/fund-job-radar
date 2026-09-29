@@ -151,6 +151,19 @@ class Config:
     def database_path(self) -> str:
         return self.get("database.path", "data/fund_job_radar.db")
 
+    def validate_notification_config(self) -> str:
+        """Check notification config and return a human-readable problem description.
+
+        Returns:
+            Empty string if notification is usable, otherwise a warning message.
+        """
+        if not self.feishu_webhook:
+            return (
+                "飞书推送未配置：环境变量 FEISHU_WEBHOOK 未设置，"
+                "所有通知将被静默丢弃。请在 .env 中配置并重启 PM2 进程。"
+            )
+        return ""
+
     def reload(self) -> None:
         """Reload configuration from file."""
         self._load()
